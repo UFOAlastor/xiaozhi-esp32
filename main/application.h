@@ -114,6 +114,22 @@ private:
     void CheckNewVersion();
     void ShowActivationCode();
     void OnClockTimer();
+
+    // 新增打断相关成员
+    static constexpr int kInterruptThreshold = 1600;  // 打断阈值(ms)
+    static constexpr int kInterruptMinDuration = 300; // 最小打断持续时间(ms)
+    static constexpr int kInterruptMaxDuration = 1000; // 最大打断持续时间(ms)
+
+    std::chrono::steady_clock::time_point last_interrupt_time_;
+    std::chrono::steady_clock::time_point interrupt_start_time_;
+    bool is_interrupting_ = false;
+    bool should_interrupt_ = false;
+
+    void CheckInterrupt(const std::vector<int16_t>& audio_data);
+    bool IsValidInterrupt(const std::vector<int16_t>& audio_data);
+    void HandleInterrupt();
+    void ResetInterruptState();
+    float CalculateEnergy(const std::vector<int16_t>& audio_data);
 };
 
 #endif // _APPLICATION_H_

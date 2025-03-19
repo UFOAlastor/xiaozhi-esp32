@@ -86,7 +86,7 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     : LcdDisplay(panel_io, panel, fonts) {
     width_ = width;
     height_ = height;
-    
+
     // draw white
     std::vector<uint16_t> buffer(width_, 0xFFFF);
     for (int y = 0; y < height_; y++) {
@@ -128,13 +128,13 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
             .avoid_tearing = true,
         }
     };
-    
+
     display_ = lvgl_port_add_disp_rgb(&display_cfg, &rgb_cfg);
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "Failed to add RGB display");
         return;
     }
-    
+
     if (offset_x != 0 || offset_y != 0) {
         lv_display_set_offset(display_, offset_x, offset_y);
     }
@@ -195,7 +195,7 @@ void LcdDisplay::SetupUI() {
     status_bar_ = lv_obj_create(container_);
     lv_obj_set_size(status_bar_, LV_HOR_RES, fonts_.text_font->line_height);
     lv_obj_set_style_radius(status_bar_, 0, 0);
-    
+
     /* Content */
     content_ = lv_obj_create(container_);
     lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
@@ -289,7 +289,7 @@ void LcdDisplay::SetEmotion(const char* emotion) {
         {"😜", "silly"},
         {"🙄", "confused"}
     };
-    
+
     // 查找匹配的表情
     std::string_view emotion_view(emotion);
     auto it = std::find_if(emotions.begin(), emotions.end(),

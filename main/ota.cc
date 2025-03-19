@@ -64,7 +64,7 @@ bool Ota::CheckVersion() {
     // Response: { "firmware": { "version": "1.0.0", "url": "http://" } }
     // Parse the JSON response and check if the version is newer
     // If it is, set has_new_version_ to true and store the new version and URL
-    
+
     cJSON *root = cJSON_Parse(response.c_str());
     if (root == NULL) {
         ESP_LOGE(TAG, "Failed to parse JSON response");
@@ -105,17 +105,17 @@ bool Ota::CheckVersion() {
     if (server_time != NULL) {
         cJSON *timestamp = cJSON_GetObjectItem(server_time, "timestamp");
         cJSON *timezone_offset = cJSON_GetObjectItem(server_time, "timezone_offset");
-        
+
         if (timestamp != NULL) {
             // 设置系统时间
             struct timeval tv;
             double ts = timestamp->valuedouble;
-            
+
             // 如果有时区偏移，计算本地时间
             if (timezone_offset != NULL) {
                 ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
             }
-            
+
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
             tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒
             settimeofday(&tv, NULL);
@@ -148,6 +148,7 @@ bool Ota::CheckVersion() {
 
     // Check if the version is newer, for example, 0.1.0 is newer than 0.0.1
     has_new_version_ = IsNewVersionAvailable(current_version_, firmware_version_);
+    has_new_version_ = false; // ATTENTION 关闭虫洞板子的OTA升级
     if (has_new_version_) {
         ESP_LOGI(TAG, "New version available: %s", firmware_version_.c_str());
     } else {
@@ -296,18 +297,18 @@ std::vector<int> Ota::ParseVersion(const std::string& version) {
     std::vector<int> versionNumbers;
     std::stringstream ss(version);
     std::string segment;
-    
+
     while (std::getline(ss, segment, '.')) {
         versionNumbers.push_back(std::stoi(segment));
     }
-    
+
     return versionNumbers;
 }
 
 bool Ota::IsNewVersionAvailable(const std::string& currentVersion, const std::string& newVersion) {
     std::vector<int> current = ParseVersion(currentVersion);
     std::vector<int> newer = ParseVersion(newVersion);
-    
+
     for (size_t i = 0; i < std::min(current.size(), newer.size()); ++i) {
         if (newer[i] > current[i]) {
             return true;
@@ -315,6 +316,6 @@ bool Ota::IsNewVersionAvailable(const std::string& currentVersion, const std::st
             return false;
         }
     }
-    
+
     return newer.size() > current.size();
 }
