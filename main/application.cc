@@ -94,7 +94,7 @@ void Application::CheckNewVersion() {
             // Use main task to do the upgrade, not cancelable
             Schedule([this, display]() {
                 SetDeviceState(kDeviceStateUpgrading);
-                
+
                 display->SetIcon(FONT_AWESOME_DOWNLOAD);
                 std::string message = std::string(Lang::Strings::NEW_VERSION) + ota_.GetFirmwareVersion();
                 display->SetChatMessage("system", message.c_str());
@@ -137,7 +137,7 @@ void Application::CheckNewVersion() {
         ota_.MarkCurrentVersionValid();
         std::string message = std::string(Lang::Strings::VERSION) + ota_.GetCurrentVersion();
         display->ShowNotification(message.c_str());
-    
+
         if (ota_.HasActivationCode()) {
             // Activation code is valid
             SetDeviceState(kDeviceStateActivating);
@@ -171,7 +171,7 @@ void Application::ShowActivationCode() {
     };
     static const std::array<digit_sound, 10> digit_sounds{{
         digit_sound{'0', Lang::Sounds::P3_0},
-        digit_sound{'1', Lang::Sounds::P3_1}, 
+        digit_sound{'1', Lang::Sounds::P3_1},
         digit_sound{'2', Lang::Sounds::P3_2},
         digit_sound{'3', Lang::Sounds::P3_3},
         digit_sound{'4', Lang::Sounds::P3_4},
@@ -280,7 +280,7 @@ void Application::StartListening() {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
-    
+
     keep_listening_ = false;
     if (device_state_ == kDeviceStateIdle) {
         Schedule([this]() {
@@ -503,7 +503,7 @@ void Application::Start() {
     });
 
     wake_word_detect_.OnWakeWordDetected([this](const std::string& wake_word) {
-        Schedule([this, &wake_word]() {
+        Schedule([this, wake_word]() {
             if (device_state_ == kDeviceStateIdle) {
                 SetDeviceState(kDeviceStateConnecting);
                 wake_word_detect_.EncodeWakeWordData();
@@ -512,7 +512,7 @@ void Application::Start() {
                     wake_word_detect_.StartDetection();
                     return;
                 }
-                
+
                 std::vector<uint8_t> opus;
                 // Encode and send the wake word data to the server
                 while (wake_word_detect_.GetWakeWordOpus(opus)) {
@@ -522,7 +522,8 @@ void Application::Start() {
                 protocol_->SendWakeWordDetected(wake_word);
                 ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
                 keep_listening_ = true;
-                SetDeviceState(kDeviceStateIdle);
+                protocol_->SendStartListening(kListeningModeAutoStop);
+                SetDeviceState(kDeviceStateListening);
             } else if (device_state_ == kDeviceStateSpeaking) {
                 AbortSpeaking(kAbortReasonWakeWordDetected);
             } else if (device_state_ == kDeviceStateActivating) {
@@ -650,7 +651,7 @@ void Application::OutputAudio() {
             output_resampler_.Process(pcm.data(), pcm.size(), resampled.data());
             pcm = std::move(resampled);
         }
-        
+
         codec->OutputData(pcm);
     });
 }
@@ -670,6 +671,18 @@ void Application::InputAudio() {
                 mic_channel[i] = data[j];
                 reference_channel[i] = data[j + 1];
             }
+
+            // 打印参考通道和麦克风通道的能量
+            float ref_energy = CalculateEnergy(reference_channel);
+            // float mic_energy = CalculateEnergy(mic_channel);
+            // ESP_LOGI(TAG, "Audio energy - Mic: %.2f, Ref: %.2f, Ratio: %.2f",
+            //     mic_energy, ref_energy, mic_energy/ref_energy);
+
+            // 如果参考通道能量过高,可能是AEC没有正确工作
+            if (ref_energy > 5000) {
+                ESP_LOGW(TAG, "Reference channel energy too high, AEC might not be working correctly");
+            }
+
             auto resampled_mic = std::vector<int16_t>(input_resampler_.GetOutputSamples(mic_channel.size()));
             auto resampled_reference = std::vector<int16_t>(reference_resampler_.GetOutputSamples(reference_channel.size()));
             input_resampler_.Process(mic_channel.data(), mic_channel.size(), resampled_mic.data());
@@ -684,6 +697,12 @@ void Application::InputAudio() {
             input_resampler_.Process(data.data(), data.size(), resampled.data());
             data = std::move(resampled);
         }
+    }
+
+    // 检查是否需要打断
+    if (device_state_ == kDeviceStateSpeaking) {
+        ESP_LOGD(TAG, "Checking interrupt in speaking state");
+        CheckInterrupt(data);
     }
 
 #if CONFIG_USE_WAKE_WORD_DETECT
@@ -718,36 +737,52 @@ void Application::SetDeviceState(DeviceState state) {
     if (device_state_ == state) {
         return;
     }
-    
+
     clock_ticks_ = 0;
     auto previous_state = device_state_;
     device_state_ = state;
     ESP_LOGI(TAG, "STATE: %s", STATE_STRINGS[device_state_]);
-    // The state is changed, wait for all background tasks to finish
+
+    // 等待所有后台任务完成
     background_task_->WaitForCompletion();
+
+    // 重置打断状态
+    ResetInterruptState();
 
     auto& board = Board::GetInstance();
     auto codec = board.GetAudioCodec();
     auto display = board.GetDisplay();
     auto led = board.GetLed();
     led->OnStateChanged();
+
     switch (state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
+            display->SetChatMessage("system", "");
 #if CONFIG_USE_AUDIO_PROCESSOR
             audio_processor_.Stop();
 #endif
+            // 确保音频通道已关闭
+            if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                protocol_->CloseAudioChannel();
+            }
+#if CONFIG_USE_WAKE_WORD_DETECT
+            wake_word_detect_.StartDetection();
+#endif
             break;
+
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
             break;
+
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+            display->SetChatMessage("system", "");
             ResetDecoder();
             opus_encoder_->ResetState();
 #if CONFIG_USE_AUDIO_PROCESSOR
@@ -755,18 +790,24 @@ void Application::SetDeviceState(DeviceState state) {
 #endif
             UpdateIotStates();
             if (previous_state == kDeviceStateSpeaking) {
-                // FIXME: Wait for the speaker to empty the buffer
-                vTaskDelay(pdMS_TO_TICKS(120));
+                // 等待扬声器缓冲区清空
+                vTaskDelay(pdMS_TO_TICKS(200));
             }
             break;
+
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
+            display->SetChatMessage("system", "");
             ResetDecoder();
             codec->EnableOutput(true);
 #if CONFIG_USE_AUDIO_PROCESSOR
             audio_processor_.Stop();
 #endif
+#if CONFIG_USE_WAKE_WORD_DETECT
+            wake_word_detect_.StopDetection();
+#endif
             break;
+
         default:
             // Do nothing
             break;
@@ -807,14 +848,14 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
         ToggleChatState();
         Schedule([this, wake_word]() {
             if (protocol_) {
-                protocol_->SendWakeWordDetected(wake_word); 
+                protocol_->SendWakeWordDetected(wake_word);
             }
-        }); 
+        });
     } else if (device_state_ == kDeviceStateSpeaking) {
         Schedule([this]() {
             AbortSpeaking(kAbortReasonNone);
         });
-    } else if (device_state_ == kDeviceStateListening) {   
+    } else if (device_state_ == kDeviceStateListening) {
         Schedule([this]() {
             if (protocol_) {
                 protocol_->CloseAudioChannel();
@@ -834,4 +875,121 @@ bool Application::CanEnterSleepMode() {
 
     // Now it is safe to enter sleep mode
     return true;
+}
+
+void Application::CheckInterrupt(const std::vector<int16_t>& audio_data) {
+    if (device_state_ != kDeviceStateSpeaking) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+
+    // 检查是否应该打断
+    if (!is_interrupting_ && IsValidInterrupt(audio_data)) {
+        ESP_LOGI(TAG, "Interrupt detected - energy: %.2f, duration: %lld ms",
+            CalculateEnergy(audio_data),
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_interrupt_time_).count());
+
+        is_interrupting_ = true;
+        interrupt_start_time_ = now;
+        should_interrupt_ = true;
+        HandleInterrupt();
+    }
+
+    // 检查打断是否应该结束
+    if (is_interrupting_) {
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - interrupt_start_time_).count();
+        if (duration >= kInterruptMaxDuration || !IsValidInterrupt(audio_data)) {
+            ESP_LOGI(TAG, "Interrupt ended - duration: %lld ms, energy: %.2f",
+                duration, CalculateEnergy(audio_data));
+            ResetInterruptState();
+        }
+    }
+}
+
+float Application::CalculateEnergy(const std::vector<int16_t>& audio_data) {
+    int64_t sum = 0;
+    for (int16_t sample : audio_data) {
+        sum += std::abs(sample);
+    }
+    return static_cast<float>(sum) / audio_data.size();
+}
+
+bool Application::IsValidInterrupt(const std::vector<int16_t>& audio_data) {
+    // 检查音频数据是否包含参考通道
+    if (audio_data.size() % 2 != 0) {
+        ESP_LOGW(TAG, "Invalid audio data size, no reference channel");
+        return false;
+    }
+
+    // 分离麦克风和参考通道
+    std::vector<int16_t> mic_channel(audio_data.size() / 2);
+    std::vector<int16_t> ref_channel(audio_data.size() / 2);
+    for (size_t i = 0, j = 0; i < mic_channel.size(); ++i, j += 2) {
+        mic_channel[i] = audio_data[j];
+        ref_channel[i] = audio_data[j + 1];
+    }
+
+    float mic_energy = CalculateEnergy(mic_channel);
+    float ref_energy = CalculateEnergy(ref_channel);
+    float energy_ratio = mic_energy / ref_energy;
+
+    ESP_LOGI(TAG, "Interrupt check - Mic: %.2f, Ref: %.2f, Ratio: %.2f",
+        mic_energy, ref_energy, energy_ratio);
+
+    // 检查能量是否超过阈值
+    if (mic_energy < kInterruptThreshold) {
+        ESP_LOGD(TAG, "Mic energy too low: %.2f < %d", mic_energy, kInterruptThreshold);
+        return false;
+    }
+
+    // 检查是否在最小打断时间之后
+    auto now = std::chrono::steady_clock::now();
+    auto time_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_interrupt_time_).count();
+    if (time_since_last < kInterruptMinDuration) {
+        ESP_LOGD(TAG, "Too soon since last interrupt: %lld ms < %d ms",
+            time_since_last, kInterruptMinDuration);
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Valid interrupt - mic energy: %.2f, time since last: %lld ms",
+        mic_energy, time_since_last);
+    return true;
+}
+
+void Application::HandleInterrupt() {
+    if (!should_interrupt_) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Handling interrupt - current state: %s", STATE_STRINGS[device_state_]);
+
+    // 先发送打断命令
+    protocol_->SendAbortSpeaking(kAbortReasonInterrupt);
+
+    // 等待音频通道关闭
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    // 确保音频处理器已停止
+#if CONFIG_USE_AUDIO_PROCESSOR
+    audio_processor_.Stop();
+#endif
+
+    // 重置解码器状态
+    ResetDecoder();
+
+    // 等待所有后台任务完成
+    background_task_->WaitForCompletion();
+
+    // 开始新的监听
+    ESP_LOGI(TAG, "Starting new listening after interrupt");
+    protocol_->SendStartListening(kListeningModeAutoStop);
+    SetDeviceState(kDeviceStateListening);
+}
+
+void Application::ResetInterruptState() {
+    ESP_LOGI(TAG, "Resetting interrupt state");
+    is_interrupting_ = false;
+    should_interrupt_ = false;
+    last_interrupt_time_ = std::chrono::steady_clock::now();
 }

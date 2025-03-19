@@ -15,8 +15,10 @@ void AudioProcessor::Initialize(int channels, bool reference) {
     reference_ = reference;
     int ref_num = reference_ ? 1 : 0;
 
+    ESP_LOGD(TAG, "reference_: %d", reference_);
+
     afe_config_t afe_config = {
-        .aec_init = false,
+        .aec_init = reference_, // ATTENTION 开启回声消除
         .se_init = true,
         .vad_init = false,
         .wakenet_init = false,
@@ -48,7 +50,7 @@ void AudioProcessor::Initialize(int channels, bool reference) {
     };
 
     afe_communication_data_ = esp_afe_vc_v1.create_from_config(&afe_config);
-    
+
     xTaskCreate([](void* arg) {
         auto this_ = (AudioProcessor*)arg;
         this_->AudioProcessorTask();

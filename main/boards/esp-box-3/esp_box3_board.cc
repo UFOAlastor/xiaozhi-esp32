@@ -114,10 +114,10 @@ private:
         panel_config.bits_per_pixel = 16;
         panel_config.vendor_config = (void *)&vendor_config;
         ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(panel_io, &panel_config, &panel));
-        
+
         esp_lcd_panel_reset(panel);
         esp_lcd_panel_init(panel);
-        esp_lcd_panel_invert_color(panel, false);
+        esp_lcd_panel_invert_color(panel, true); // ATTENTION 虫洞开发板屏幕设置true
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
         esp_lcd_panel_disp_on_off(panel, true);
@@ -149,17 +149,17 @@ public:
 
     virtual AudioCodec* GetAudioCodec() override {
         static BoxAudioCodec audio_codec(
-            i2c_bus_, 
-            AUDIO_INPUT_SAMPLE_RATE, 
+            i2c_bus_,
+            AUDIO_INPUT_SAMPLE_RATE,
             AUDIO_OUTPUT_SAMPLE_RATE,
-            AUDIO_I2S_GPIO_MCLK, 
-            AUDIO_I2S_GPIO_BCLK, 
-            AUDIO_I2S_GPIO_WS, 
-            AUDIO_I2S_GPIO_DOUT, 
+            AUDIO_I2S_GPIO_MCLK,
+            AUDIO_I2S_GPIO_BCLK,
+            AUDIO_I2S_GPIO_WS,
+            AUDIO_I2S_GPIO_DOUT,
             AUDIO_I2S_GPIO_DIN,
-            AUDIO_CODEC_PA_PIN, 
-            AUDIO_CODEC_ES8311_ADDR, 
-            AUDIO_CODEC_ES7210_ADDR, 
+            AUDIO_CODEC_PA_PIN,
+            AUDIO_CODEC_ES8311_ADDR,
+            AUDIO_CODEC_ES7210_ADDR,
             AUDIO_INPUT_REFERENCE);
         return &audio_codec;
     }

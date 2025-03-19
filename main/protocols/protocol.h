@@ -15,6 +15,7 @@ struct BinaryProtocol3 {
 
 enum AbortReason {
     kAbortReasonNone,
+    kAbortReasonInterrupt,  // 新增: 用户打断
     kAbortReasonWakeWordDetected
 };
 
