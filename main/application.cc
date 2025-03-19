@@ -672,17 +672,6 @@ void Application::InputAudio() {
                 reference_channel[i] = data[j + 1];
             }
 
-            // 打印参考通道和麦克风通道的能量
-            float ref_energy = CalculateEnergy(reference_channel);
-            // float mic_energy = CalculateEnergy(mic_channel);
-            // ESP_LOGI(TAG, "Audio energy - Mic: %.2f, Ref: %.2f, Ratio: %.2f",
-            //     mic_energy, ref_energy, mic_energy/ref_energy);
-
-            // 如果参考通道能量过高,可能是AEC没有正确工作
-            if (ref_energy > 5000) {
-                ESP_LOGW(TAG, "Reference channel energy too high, AEC might not be working correctly");
-            }
-
             auto resampled_mic = std::vector<int16_t>(input_resampler_.GetOutputSamples(mic_channel.size()));
             auto resampled_reference = std::vector<int16_t>(reference_resampler_.GetOutputSamples(reference_channel.size()));
             input_resampler_.Process(mic_channel.data(), mic_channel.size(), resampled_mic.data());
@@ -949,6 +938,13 @@ bool Application::IsValidInterrupt(const std::vector<int16_t>& audio_data) {
     if (time_since_last < kInterruptMinDuration) {
         ESP_LOGD(TAG, "Too soon since last interrupt: %lld ms < %d ms",
             time_since_last, kInterruptMinDuration);
+        return false;
+    }
+
+    // 能量比例判断
+    if (energy_ratio < 200.0) { // 要求麦克风能量显著高于参考能量
+        ESP_LOGD(TAG, "Invalid interrupt - mic energy: %.2f, ref energy: %.2f, ratio: %.2f",
+            mic_energy, ref_energy, energy_ratio);
         return false;
     }
 
